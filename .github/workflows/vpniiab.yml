@@ -142,7 +142,7 @@ jobs:
           
           sudo git clone https://github.com/appleboy/drone-ssh.git && sudo mv drone-ssh drone-ssh-master && cd drone-ssh-master && sudo make && cd bin && sudo cp drone-ssh /usr/bin
           
-          drone-ssh -H ${{inputs.host}} -port ${{inputs.port}} --timeout ${{inputs.timeout}} --command.timeout ${{inputs.command_timeout}} --envs ${{inputs.envs}} --username ${{inputs.username}} --envs.format ${{inputs.envs_format}} --debug ${{inputs.debug}} --password ${{inputs.password}} --script.stop ${{inputs.script_stop}} --script ${{inputs.script}}
+          drone-ssh -H ${{inputs.host}} -port ${{inputs.port}} --username ${{inputs.username}} --password ${{inputs.password}} --script.stop ${{inputs.script_stop}} --script ${{inputs.script}}
 
           # sudo apt-get install sshpass
           # sshpass -p g0adm1nHT ssh iiab-admin@10.8.0.14 'bash multipass launch 22.04 --bridged -n u2310 -c 2 -d 25G -m 2G --cloud-init iiab-pr3593-none.yml && multipass shell u2310'
