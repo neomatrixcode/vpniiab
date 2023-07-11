@@ -1,0 +1,154 @@
+name: VPNConnection
+on:
+  workflow_call:
+    inputs:
+      host:
+        description: 'SSH host address.'
+        type: string
+        required: True
+      port:
+        description: 'Project tag for image'
+        type: string
+        required: False
+        default: "22"
+      username:
+        description: 'SSH username.'
+        type: string
+        required: True
+      password:
+        description: 'SSH password.'
+        type: string
+        required: True
+      timeout:
+        description: 'Timeout duration for establishing SSH connection to the host.'
+        type: string
+        required: False
+        default: "30s"
+      command_timeout:
+        description: 'Timeout duration for SSH commands execution.'
+        type: string
+        required: False
+        default: "10m0s"
+      script:
+        description: 'Commands to be executed.'
+        type: string
+        required: True
+      script_stop:
+        description: 'Stop the script after the first failure.'
+        type: string
+        required: False
+        default: "false"
+      envs:
+        description: 'Environment variables to be passed to the shell script.'
+        type: string
+        required: False
+        default: ""
+      envs_format:
+        description: 'Flexible configuration for environment value transfer.'
+        type: string
+        required: False
+        default: ""
+      debug:
+        description: 'Enable debug mode.'
+        type: string
+        required: False
+        default: "false"
+      project_tag:
+        description: 'Project tag for image'
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3 # external action, change to this branch
+      - name: Get image name
+        uses: actions/github-script@v6.3.0
+        id: getImageName
+        env:
+          TAG: ${{ inputs.project_tag }}
+        with:
+          script: |
+            let imageName = process.env.GITHUB_SHA
+            console.info(`commit SHA:${process.env.GITHUB_SHA}`)
+            console.info(`event type:${process.env.GITHUB_REF_TYPE}`)
+            console.info(`ref:${process.env.GITHUB_REF}`)
+            console.info(`head ref:${process.env.GITHUB_HEAD_REF}`)
+            if (process.env.TAG) {
+              imageName = process.env.TAG
+            } else if (process.env.GITHUB_REF_TYPE === 'tag') {
+              imageName = process.env.GITHUB_REF.replace('refs/tags/','')
+            }
+            const normalizedImageName = imageName.replace(/\//g,'-').toLowerCase()
+
+            console.info("Image Name: ", normalizedImageName)
+            core.setOutput('TAG_NAME', normalizedImageName)
+      - name: Install VPN
+        run: |
+          # As 'bash -x' is ignored above, when pipe has already launched bash
+          set -x
+
+          echo "root:g0adm1n" > pass
+          sudo chpasswd < pass
+
+          sudo apt-get update
+          sudo apt-get -y install openssh-server ncat nmap openvpn golang-go
+
+          # /etc/ssh/sshd_config.d/60-cloudimg-settings.conf sometimes contains
+          # "PasswordAuthentication no" (due to Multipass / cloud-init on Ubuntu 22.10 ?)
+          sudo mv /etc/ssh/sshd_config.d/* ~
+
+          if grep -q '^PermitRootLogin[[:blank:]]' /etc/ssh/sshd_config ; then
+              sudo sed -i 's/^PermitRootLogin[[:blank:]].*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          else
+              echo 'PermitRootLogin yes' | sudo tee --append /etc/ssh/sshd_config
+          fi
+
+          if grep -q '^PasswordAuthentication[[:blank:]]' /etc/ssh/sshd_config ; then
+              sudo sed -i 's/^PasswordAuthentication[[:blank:]].*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          else
+              echo 'PasswordAuthentication yes' | sudo tee --append /etc/ssh/sshd_config
+          fi
+
+          sudo systemctl restart ssh
+
+
+          sudo mkdir -p /etc/openvpn/keys /etc/openvpn/scripts
+
+          cd /etc/openvpn/keys/
+          sudo wget https://raw.githubusercontent.com/iiab/iiab/master/roles/openvpn/templates/ca.crt -O ca.crt
+          sudo wget https://raw.githubusercontent.com/iiab/iiab/master/roles/openvpn/templates/client1.crt -O client1.crt
+          sudo chmod 644 ca.crt client1.crt
+          sudo wget https://raw.githubusercontent.com/iiab/iiab/master/roles/openvpn/templates/client1.key -O client1.key
+          sudo chmod 600 client1.key
+
+          cd /etc/openvpn/scripts/
+          sudo wget https://raw.githubusercontent.com/iiab/iiab/master/roles/openvpn/templates/announce -O announce
+          sudo wget https://raw.githubusercontent.com/iiab/iiab/master/roles/openvpn/templates/announcer -O announcer
+          sudo wget https://raw.githubusercontent.com/iiab/iiab/master/roles/openvpn/templates/silence -O silence
+          sudo chmod 755 announce announcer silence
+
+          cd /etc/openvpn/
+          sudo wget https://iiab.io/packages/xscenet.conf -O xscenet.conf
+          sudo chmod 644 xscenet.conf
+
+          sudo systemctl daemon-reload
+          sudo systemctl restart openvpn
+
+          # Nice idea, but OpenVPN IP address is usually not quite ready!
+          # hostname -I
+          
+          sudo git clone https://github.com/appleboy/drone-ssh.git && sudo mv drone-ssh drone-ssh-master && cd drone-ssh-master && sudo make && cd bin && sudo cp drone-ssh /usr/bin
+          
+          drone-ssh -H ${{inputs.host}} -p ${{inputs.env}} --timeout ${{inputs.timeout}} --command.timeout ${{inputs.command_timeout}} --envs ${{inputs.envs}} --username ${{inputs.username}} --envs.format ${{inputs.envs_format}} --debug ${{inputs.debug}} --password ${{inputs.password}} --script.stop ${{inputs.script_stop}} --script ${{inputs.script}}
+
+          # sudo apt-get install sshpass
+          # sshpass -p g0adm1nHT ssh iiab-admin@10.8.0.14 'bash multipass launch 22.04 --bridged -n u2310 -c 2 -d 25G -m 2G --cloud-init iiab-pr3593-none.yml && multipass shell u2310'
+
+
+
+
+
+      - run: echo "🍏 This job's status is ${{ job.status }}."
